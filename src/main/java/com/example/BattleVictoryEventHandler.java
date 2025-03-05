@@ -1,15 +1,27 @@
 package com.example;
 
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
-
+import java.util.stream.Collectors;
+import java.io.Reader;
 import com.cobblemon.mod.common.api.events.battles.BattleVictoryEvent;
 import com.cobblemon.mod.common.battles.actor.PlayerBattleActor;
-import com.example.*;
+
+import com.google.gson.Gson;
+
+
 import kotlin.Unit;
 import kotlin.jvm.functions.Function1;
+import net.minecraft.entity.decoration.DisplayEntity.TextDisplayEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 
 public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, Unit> {
     @Override
@@ -25,9 +37,16 @@ public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, 
         PlayerBattleActor loserActor=(PlayerBattleActor) event.getLosers().get(0);
         ServerPlayerEntity loser=loserActor.getEntity();
         
+
         onPlayerVictory(winner,loser);
         onPlayerDefeat(loser,winner);
+      
         Ivorankeds.borrarBatalla(event.getBattle());
+        
+        if(Ivorankeds.config.get("textDisplay").getAsBoolean()) {
+        	updateTextDisplay(winner);
+        }
+        
         return Unit.INSTANCE;
     }
 
@@ -46,12 +65,8 @@ public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, 
             return false;
         }
     }
-
-    private boolean isPlayerVictory(BattleVictoryEvent event) {
-        ServerPlayerEntity player = event.getBattle().getPlayers().get(0);
-        return event.getWinners().stream().anyMatch(battleActor -> battleActor.isForPlayer(player));
-    }
-
+    
+    
     private void onPlayerVictory(ServerPlayerEntity jugador,ServerPlayerEntity oponente) {
     	updateBattleWinner(jugador,oponente);
     	Rango rango=Rango.cargar(jugador);
@@ -61,6 +76,17 @@ public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, 
     	int rangoPerdedor= (rangoOponente.getRango().ordinal()*3)+ (4-rangoOponente.getSubRango());
     	
     	int ganancia=30+(2*(rangoPerdedor-rangoGanador));
+    	long tsl=Ivorankeds.timeSinceLast(jugador,oponente);
+    	Ivorankeds.LOGGER.info("TSL: "+tsl);
+    	int matchCD = Ivorankeds.config.get("matchCD").getAsInt();
+    	int matchCDfullTimes = Ivorankeds.config.get("matchCDfullTimes").getAsInt();
+    	if(tsl<matchCD*matchCDfullTimes) {
+    		double intervalsPassed = (((double) tsl) / matchCD)+1;
+        	Ivorankeds.LOGGER.info("INTERVALS PASSED: "+intervalsPassed);
+    		double multiplier = (double) intervalsPassed / matchCDfullTimes;
+        	Ivorankeds.LOGGER.info("MULTIPLIER: "+multiplier);
+    		ganancia=(int) (ganancia*multiplier);
+    	}
     	tellraw(jugador,jugador.getName().getLiteralString(),"¡HAS GANADO "+ganancia+" PUNTOS!","green");
     	int subRangoPre=rango.getSubRango();
     	puntos= puntos+ganancia;
@@ -79,6 +105,14 @@ public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, 
     	int rangoPerdedor= (rangoOponente.getRango().ordinal()*3)+ (4-rangoOponente.getSubRango());
 
     	int perdida=25-(2*(rangoPerdedor-rangoGanador));
+    	long tsl=Ivorankeds.timeSinceLast(jugador,oponente);
+    	int matchCD = Ivorankeds.config.get("matchCD").getAsInt();
+    	int matchCDfullTimes = Ivorankeds.config.get("matchCDfullTimes").getAsInt();
+    	if(tsl<matchCD*matchCDfullTimes) {
+    		double intervalsPassed = (((double) tsl) / matchCD)+1;
+    		double multiplier = (double) intervalsPassed / matchCDfullTimes;
+    		perdida=(int) (perdida*multiplier);
+    	}
     	tellraw(jugador,jugador.getName().getLiteralString(),"HAS PERDIDO "+perdida+" PUNTOS","red");
     	int subRangoPre=rango.getSubRango();
     	puntos= puntos-perdida;
@@ -113,6 +147,102 @@ public class BattleVictoryEventHandler implements Function1<BattleVictoryEvent, 
         }
         Ivorankeds.saveBattleRegistryList(battles);
     }
+    
+    
+    public static void updateTextDisplay(ServerPlayerEntity jugador) {
+    	int x = Ivorankeds.config.get("x").getAsInt();
+    	int y = Ivorankeds.config.get("y").getAsInt();
+    	int z = Ivorankeds.config.get("z").getAsInt();
+    	
+        BlockPos pos = new BlockPos(x, y, z);
+
+        // Definir un radio de búsqueda (por ejemplo, 1 bloque) y crear un "Box" de búsqueda
+        double radio = 2.0;
+        Box areaBusqueda = new Box(pos).expand(radio);
+        List<TextDisplayEntity> entidades = jugador.getServer().getOverworld().getEntitiesByClass(TextDisplayEntity.class, areaBusqueda, entity -> true);
+        if (!entidades.isEmpty()) {
+            // Se obtiene la primera entidad encontrada y se actualiza su texto
+            TextDisplayEntity textDisplay = (TextDisplayEntity) entidades.get(0);
+            textDisplay.setText(Text.of(getRanking()));
+        }
+        return;
+    }
+    
+    
+    public static String getRanking() {
+    	List<Rango> rangoList = new ArrayList<>();
+        Gson gson = new Gson();
+        Path folder = Paths.get("config/ivorankeds");
+
+        // Iterar sobre cada archivo de la carpeta
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder)) {
+            for (Path file : stream) {
+                if (Files.isRegularFile(file)) {
+                    try (Reader reader = Files.newBufferedReader(file)) {
+                        Rango rango = gson.fromJson(reader, Rango.class);
+                        rangoList.add(rango);
+                    } catch (Exception e) {
+                        System.err.println("Error leyendo archivo " + file.getFileName() + ": " + e.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error accediendo a la carpeta: " + e.getMessage());
+        }
+        List<Rango> top10 = rangoList.stream()
+        	    .sorted((r1, r2) -> {
+        	        int score1 = (r1.getRango().ordinal() * 3) + (4 - r1.getSubRango());
+        	        int score2 = (r2.getRango().ordinal() * 3) + (4 - r2.getSubRango());
+        	        int cmp = Integer.compare(score2, score1);
+        	        if(cmp == 0) {
+        	            // En caso de empate, comparamos por puntos (mayor a menor)
+        	            cmp = Integer.compare(r2.getPuntos(), r1.getPuntos());
+        	        }
+        	        return cmp;
+        	    })
+        	    .limit(10)
+        	    .collect(Collectors.toList());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Top 10 Jugadores:\n");
+        for (int i = 0; i < top10.size(); i++) {
+            Rango r = top10.get(i);
+            sb.append((i + 1)).append(". ")
+              .append(r.getJugador())
+              .append(" - ").append(r.getRango()+" ").append(r.getSubRango() +" (").append(r.getPuntos()+" Puntos)")
+              .append("\n");
+        }
+        for (int i = top10.size(); i < 10; i++) {
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 
 }
 

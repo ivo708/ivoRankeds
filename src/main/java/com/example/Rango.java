@@ -8,6 +8,7 @@ import java.nio.file.Paths;
 import java.util.UUID;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 import net.minecraft.server.network.ServerPlayerEntity;
 enum Rangos{
@@ -23,6 +24,8 @@ public class Rango {
     private Rangos rango;
     private int subRango;
     private int puntos;
+    
+    
 	public String getJugador() {
 		return jugador;
 	}	
@@ -85,6 +88,7 @@ public class Rango {
 	
 	public void subirSubRango() {
 		this.puntos=0;
+		updateLP(jugador,true);
 		if(this.subRango>1) {
 			this.subRango=this.subRango-1;
 		}
@@ -94,6 +98,7 @@ public class Rango {
 	}
 	public void bajarSubRango() {
 		this.puntos=66;
+        updateLP(jugador,false);
 		if(this.subRango<3) {
 			this.subRango=this.subRango+1;
 		}
@@ -101,10 +106,15 @@ public class Rango {
 			bajarRango();
 		}
 	}
+	
+	
 	public void subirRango() {
 		this.rango=Rangos.values()[this.rango.ordinal()+1];
 		this.subRango=3;
-	}
+        
+    }
+	
+	
 	public void bajarRango() {
 		this.rango=Rangos.values()[this.rango.ordinal()-1];
 		this.subRango=1;
@@ -131,26 +141,35 @@ public class Rango {
             e.printStackTrace();
         }
     }
-    public static void tellRango(ServerPlayerEntity jugador) {
-    	Rango rango=cargar(jugador);
-    	tellraw(jugador,jugador.getName().getLiteralString(),"ACTUALMENTE ESTÁS EN: "+rango.getRango()+" "+rango.getSubRango()+" ("+rango.getPuntos()+" Puntos)","gold");    	
-    }
+
+    
     public static Rango cargar(ServerPlayerEntity jugador) {
         Path directory = Paths.get("config/ivorankeds");
-        if (!Files.exists(directory)) {
-            try {
-				Files.createDirectories(directory);
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+        
+        // Crear el directorio si no existe
+        try {
+            if (!Files.exists(directory)) {
+                Files.createDirectories(directory);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            // Manejo de error según convenga
         }
+        
         Path path = directory.resolve(jugador.getName().getLiteralString() + ".json");
         Gson gson = new Gson();
-
+        
         if (!Files.exists(path)) {
             System.out.println("Archivo no encontrado, se inicializa Rango por defecto");
-            return new Rango(jugador.getName().getLiteralString(), jugador.getUuid(), Rangos.Entrenador, 3, 50);
+            Rango rangoDefault = new Rango(jugador.getName().getLiteralString(), jugador.getUuid(), Rangos.Entrenador, 3, 50);
+            try {
+                String json = new GsonBuilder().setPrettyPrinting().create().toJson(rangoDefault);
+                Files.write(path, json.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            updateLP(jugador.getName().getLiteralString(),true);
+            return rangoDefault;
         }
         
         try {
@@ -158,11 +177,39 @@ public class Rango {
             return gson.fromJson(json, Rango.class);
         } catch (IOException e) {
             e.printStackTrace();
-            return new Rango(jugador.getName().getLiteralString(), jugador.getUuid(), Rangos.Entrenador, 3, 50); 
+            updateLP(jugador.getName().getLiteralString(),true);
+            return new Rango(jugador.getName().getLiteralString(), jugador.getUuid(), Rangos.Entrenador, 3, 50);
         }
     }
+    
+    public static void tellRango(ServerPlayerEntity jugador) {
+    	Rango rango=cargar(jugador);
+    	tellraw(jugador,jugador.getName().getLiteralString(),"ACTUALMENTE ESTÁS EN: "+rango.getRango()+" "+rango.getSubRango()+" ("+rango.getPuntos()+" Puntos)","gold");    	
+    }
+    
     public static void tellraw(ServerPlayerEntity jugador,String target,String mensaje, String color) {
     	String cmd = "tellraw "+target+" {\"text\":\"\\n"+mensaje+"\\n\",\"bold\":true,\"italic\":true,\"color\":\""+color+"\"}";
     	jugador.getServer().getCommandManager().executeWithPrefix(jugador.getServer().getCommandSource(),cmd);
+    }
+    
+    public static void updateLP(String jugador,boolean promote) {
+        if (Ivorankeds.config == null) {
+            System.out.println("La configuración aún no está inicializada. Abortando updateLP.");
+            return;
+        }
+        if(!Ivorankeds.config.get("lpIntegration").getAsBoolean()) {
+        	return;
+        }
+        String rangoCmd;
+        if(promote) {
+        	rangoCmd="promote ligapokemon";
+        }
+        else {
+        	rangoCmd="demote ligapokemon";
+
+        }
+    	//AÑADIR COMANDO
+    	String cmd="lp user "+jugador+ " " +rangoCmd;
+    	Ivorankeds.server.getCommandManager().executeWithPrefix(Ivorankeds.server.getCommandSource(), cmd);
     }
 }
